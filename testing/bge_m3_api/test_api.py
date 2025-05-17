@@ -22,8 +22,9 @@ def test_encode(api_url, api_key):
     
     # Sample texts to encode
     sample_texts = [
-        "This is a test sentence for BGE-M3 model.",
-        "The BGE-M3 model generates embeddings for natural language."
+        "This is the first test sentence, acting as the query.",
+        "The BGE-M3 model generates embeddings for natural language.",
+        "Another sentence to compare against the first one."
     ]
     
     # Prepare headers and payload
@@ -35,7 +36,9 @@ def test_encode(api_url, api_key):
     payload = {
         "texts": sample_texts,
         "return_dense": True,
-        "return_sparse": False
+        "return_sparse": False,
+        "return_colbert_vecs": True, # Ensure Colbert vecs are returned
+        "compute_colbert_pairwise_scores": True # Request similarity scores (relative to first)
     }
     
     try:
@@ -65,10 +68,29 @@ def test_encode(api_url, api_key):
                 else:
                     print("No dense vectors returned")
                     
-                # Check for other return types if present
-                for key in result:
-                    if key != "dense_vecs":
-                        print(f"Also received: {key}")
+                # Check for Colbert scores relative to the first text
+                if "colbert_scores_relative_to_first" in result:
+                    colbert_scores = result["colbert_scores_relative_to_first"]
+                    print(f"Received {len(colbert_scores)} Colbert similarity scores (relative to first text):")
+                    for score_info in colbert_scores:
+                        print(f"  Query text (index {score_info['query_text_index']}) vs Candidate text (index {score_info['candidate_text_index']}): {score_info['score']:.4f}")
+                elif payload["compute_colbert_pairwise_scores"]:
+                    print("Colbert scores relative to first were requested but not found in response.")
+
+                # Check for other return types if present (excluding already processed keys)
+                processed_keys = {"dense_vecs", "colbert_scores_relative_to_first", "colbert_vecs"}
+                if payload.get("return_colbert_vecs"):
+                    if "colbert_vecs" in result:
+                        print(f"Received {len(result['colbert_vecs'])} Colbert vectors.")
+                    else:
+                        print("Colbert vectors were requested but not found.")
+                
+                other_keys = [k for k in result if k not in processed_keys and k != "colbert_vecs"]
+                if other_keys:
+                    print("Also received other keys:")
+                    for key in other_keys:
+                        print(f"  {key}: {str(result[key])[:100]}...") # Print a preview
+
             except json.JSONDecodeError as e:
                 print(f"Error parsing JSON response: {e}")
                 print("Raw response content:")
