@@ -1,14 +1,15 @@
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, Response, stream_with_context
 from dotenv import load_dotenv
 import google.generativeai as genai
 import os
+import json
 
 load_dotenv()
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 # for similarity paragraph generation
-from utils import generate_similarity_paragraph
+from utils import generate_similarity_paragraph_stream
 
 app = Flask(__name__)
 
@@ -32,7 +33,7 @@ def gemini_test():
 
 @app.route('/api/compare-papers', methods=['POST'])
 def compare_papers():
-    """API endpoint to compare two research papers and generate similarity analysis"""
+    """API endpoint to compare two research papers and generate similarity analysis with streaming response"""
     if 'file1' not in request.files or 'file2' not in request.files:
         return jsonify({
             "status": "error", 
@@ -58,14 +59,27 @@ def compare_papers():
         pdf_bytes1 = file1.read()
         pdf_bytes2 = file2.read()
         
-        similarity_paragraph = generate_similarity_paragraph(pdf_bytes1, pdf_bytes2)
+        def generate():
+            yield json.dumps({
+                "status": "processing",
+                "message": "Starting comparison..."
+            }) + '\n'
+            
+            # Stream the similarity paragraph generation
+            for chunk in generate_similarity_paragraph_stream(pdf_bytes1, pdf_bytes2):
+                yield json.dumps({
+                    "status": "generating",
+                    "chunk": chunk
+                }) + '\n'
+            
+            yield json.dumps({
+                "status": "complete",
+                "paper1_name": file1.filename,
+                "paper2_name": file2.filename
+            }) + '\n'
         
-        return jsonify({
-            "status": "success",
-            "similarity_analysis": similarity_paragraph,
-            "paper1_name": file1.filename,
-            "paper2_name": file2.filename
-        })
+        return Response(stream_with_context(generate()), 
+                       mimetype='text/event-stream')
     except Exception as e:
         return jsonify({
             "status": "error",
