@@ -67,7 +67,7 @@ export default function HomeScreen({ navigation }: any) {
         style={[styles.graphBtn, { bottom: insets.bottom + 24 }]}
         onPress={() => router.push('/graph')} 
         >
-        <RNText style={styles.graphBtnText}>Open Knowledge Graph</RNText>
+        <RNText style={styles.graphBtnText}>Open Inciteful Graph</RNText>
       </Pressable>
     </SafeAreaView>
   );
