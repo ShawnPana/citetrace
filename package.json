@@ -1,0 +1,15 @@
+{
+  "dependencies": {
+    "@react-three/drei": "^10.0.7",
+    "@react-three/fiber": "^9.1.2",
+    "d3": "^7.9.0",
+    "d3-force": "^3.0.0",
+    "expo-gl": "^15.1.5",
+    "react": "^19.1.0",
+    "three": "^0.176.0"
+  },
+  "devDependencies": {
+    "@types/d3-force": "^3.0.10",
+    "react-native-svg": "^15.12.0"
+  }
+}
