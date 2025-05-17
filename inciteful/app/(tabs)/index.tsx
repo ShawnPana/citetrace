@@ -30,11 +30,9 @@ export default function HomeScreen({ navigation }: any) {
   // Upload a PDF to Supabase storage and show its public URL
   const uploadPdf = async (paper: Paper) => {
     try {
-      // Fetch the file as a blob
       const response = await fetch(paper.uri);
       const fileBlob = await response.blob();
 
-      // Upload to 'pdfs' bucket under the original filename
       const { data: uploadData, error: uploadError } = await supabase
         .storage
         .from('pdfs')
@@ -45,14 +43,11 @@ export default function HomeScreen({ navigation }: any) {
         });
       if (uploadError) throw uploadError;
 
-      // Since the bucket is public, get a public URL
-      const { data: urlData, error: urlError } = supabase
+      const { data: urlData } = supabase
         .storage
         .from('pdfs')
         .getPublicUrl(paper.name);
-      if (urlError) throw urlError;
 
-      // Notify user of the accessible URL
       Alert.alert(
         'Upload successful',
         `Public URL:\n${urlData.publicUrl}`
@@ -63,12 +58,14 @@ export default function HomeScreen({ navigation }: any) {
     }
   };
 
-  // pick PDF → add to list and upload
   const pickPdf = async () => {
     try {
       const res = await DocumentPicker.getDocumentAsync({ type: 'application/pdf' });
-      if (res.type === 'cancel') return;
-      const asset = (res as any).assets?.[0] || (res as any);
+      if (res.canceled) return;
+      
+      const asset = res.assets?.[0];
+      if (!asset) return;
+      
       const newPaper = {
         id: Date.now().toString(),
         name: asset.name ?? 'Untitled.pdf',
@@ -81,10 +78,8 @@ export default function HomeScreen({ navigation }: any) {
     }
   };
 
-  // remove from list
   const remove = (id: string) => setPapers((p) => p.filter((n) => n.id !== id));
 
-  // row with name + delete X icon
   const Row = ({ item }: { item: Paper }) => (
     <View style={styles.row}>
       <RNText numberOfLines={1} style={styles.rowText}>{item.name}</RNText>
