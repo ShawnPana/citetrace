@@ -163,11 +163,11 @@ export default function KnowledgeGraphScreen() {
             />
             <RNText style={styles.section}>Prominent Professors</RNText>
             {professorsByNode[selected.id].map((prof) => (
-              <RNText key={prof} style={styles.list}>, {prof}</RNText>
+              <RNText key={prof} style={styles.list}>* {prof}</RNText>
             ))}
             <RNText style={styles.section}>Related arXiv Papers</RNText>
             {arxivByNode[selected.id].map(({ title, id }) => (
-              <RNText key={id} style={styles.list}>, {title} ({id})</RNText>
+              <RNText key={id} style={styles.list}>* {title} ({id})</RNText>
             ))}
             <Pressable style={styles.close} onPress={() => setSelected(null)}>
               <RNText style={styles.closeText}>Close</RNText>
