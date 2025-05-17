@@ -65,7 +65,6 @@ def compare_papers():
                 "message": "Starting comparison..."
             }) + '\n'
             
-            # Stream the similarity paragraph generation
             for chunk in generate_similarity_paragraph_stream(pdf_bytes1, pdf_bytes2):
                 yield json.dumps({
                     "status": "generating",

@@ -24,7 +24,6 @@ def generate_similarity_paragraph_stream(pdf_bytes1, pdf_bytes2):
     import PyPDF2
     import io
     
-    # Extract text from PDFs
     def extract_text_from_pdf(pdf_bytes):
         try:
             pdf_reader = PyPDF2.PdfReader(io.BytesIO(pdf_bytes))
@@ -38,14 +37,12 @@ def generate_similarity_paragraph_stream(pdf_bytes1, pdf_bytes2):
     text1 = extract_text_from_pdf(pdf_bytes1)
     text2 = extract_text_from_pdf(pdf_bytes2)
     
-    # Truncate texts if they're too long to fit in the context
-    max_chars = 10000  # Adjust based on Gemini's limitations
+    max_chars = 10000
     if len(text1) > max_chars:
         text1 = text1[:max_chars] + "... [truncated]"
     if len(text2) > max_chars:
         text2 = text2[:max_chars] + "... [truncated]"
     
-    # Create a prompt for Gemini
     prompt = f"""
     I have two research papers. Here are extracts from both:
     
@@ -64,7 +61,6 @@ def generate_similarity_paragraph_stream(pdf_bytes1, pdf_bytes2):
     Write a comprehensive paragraph that explains how these papers are related to each other.
     """
     
-    # Generate content using Gemini with streaming
     model = genai.GenerativeModel('models/gemini-2.0-flash')
     response = model.generate_content(prompt, stream=True)
     
