@@ -47,6 +47,7 @@ ENV/
 .Trashes
 ehthumbs.db
 Thumbs.db
+*.pem
 
 # Backend specific
 backend/test.py
