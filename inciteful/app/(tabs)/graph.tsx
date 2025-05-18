@@ -36,7 +36,7 @@ interface Link {
   similarity: number;
 }
 
-export default function KnowledgeGraphScreen() {
+export default function KnowledgeGraphScreen({ standAlone = true }: { standAlone?: boolean } = {}) {
   const [nodes, setNodes] = useState<Node[]>([]);
   const [links, setLinks] = useState<Link[]>([]);
   const [selected, setSelected] = useState<Node | null>(null);
@@ -135,7 +135,9 @@ export default function KnowledgeGraphScreen() {
   }, []);
 
   const windowDims = Dimensions.get("window");
-  const W = windowDims.width;
+  // If used as a standalone screen, use full window width minus sidebar
+  // If used in combined view, use the container width it's given
+  const W = standAlone ? windowDims.width : windowDims.width * 0.6; // 60% of screen in combined view
   const H = windowDims.height;
   const cx = W / 2;
   const cy = H / 2;
@@ -143,8 +145,9 @@ export default function KnowledgeGraphScreen() {
   const positioned = nodes.map((n) => {
     const rawX = cx + n.radius * Math.cos(n.angle + theta);
     const rawY = cy + n.radius * Math.sin(n.angle + theta);
-    const maxW = W - SIDEBAR_WIDTH;
-    const maxH = H - 100;
+    // For standalone mode, we respect the sidebar; for combined mode, we use the full width
+    const maxW = standAlone ? (W - SIDEBAR_WIDTH) : W;
+    const maxH = H - (standAlone ? 100 : 0);
     const x = Math.min(Math.max(rawX, BASE_RADIUS), maxW - BASE_RADIUS);
     const y = Math.min(Math.max(rawY, BASE_RADIUS), maxH - BASE_RADIUS);
     return { ...n, x, y };
@@ -160,12 +163,14 @@ export default function KnowledgeGraphScreen() {
 
   return (
     <View style={styles.container}>
-      <View style={styles.header}>
-        <RNText style={styles.headerTitle}>Knowledge Graph Explorer</RNText>
-      </View>
+      {standAlone && (
+        <View style={styles.header}>
+          <RNText style={styles.headerTitle}>Knowledge Graph Explorer</RNText>
+        </View>
+      )}
       <View style={styles.body}>
         <View style={styles.graphWrapper}>
-          <Svg width={W - SIDEBAR_WIDTH} height={H - 100}>
+          <Svg width={standAlone ? (W - SIDEBAR_WIDTH) : W} height={H - (standAlone ? 100 : 0)}>
             {hulls.map((hull, idx) => hull && (
               <Path
                 key={idx}
@@ -262,7 +267,7 @@ const styles = StyleSheet.create({
   header: { height: 60, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e0e0e0' },
   headerTitle: { fontSize: 20, fontWeight: '700', color: '#333' },
   body: { flex: 1, flexDirection: 'row' },
-  graphWrapper: { width: Dimensions.get('window').width - SIDEBAR_WIDTH, backgroundColor: '#f5f7fa', height: '100%' },
+  graphWrapper: { flex: 1, backgroundColor: '#f5f7fa', height: '100%' },
   sidebar: { width: SIDEBAR_WIDTH, backgroundColor: '#fff', borderLeftWidth: 1, borderLeftColor: '#e0e0e0', padding: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
   sidebarContent: { paddingBottom: 40, flexGrow: 1, justifyContent: 'center' },
   title: { fontSize: 22, fontWeight: '800', marginBottom: 16, color: '#4a4a4a' },

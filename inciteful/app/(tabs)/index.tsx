@@ -8,14 +8,18 @@ import {
   FlatList,
   Alert,
   SafeAreaView,
+  ActivityIndicator, // Added
+  Modal, // Added
 } from "react-native";
 import * as DocumentPicker from "expo-document-picker";
 import Svg, { Path } from "react-native-svg";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useRouter } from 'expo-router';
 import { createClient } from '@supabase/supabase-js';
+import { initializeRagApi } from './ChatComponent'; // Import the function
 
 // Get Supabase credentials from environment variables
+// Environment variables are now loaded from the root .env file
 const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL || '';
 const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -26,6 +30,24 @@ export default function HomeScreen({ navigation }: any) {
   const insets = useSafeAreaInsets();
   const [papers, setPapers] = useState<Paper[]>([]);
   const router = useRouter();
+  const [isInitializing, setIsInitializing] = useState(false); // Added state for loading
+
+  const handleOpenChatAndGraph = async () => {
+    console.log("[index.tsx] handleOpenChatAndGraph triggered"); // New log
+    setIsInitializing(true); // Show loading screen
+    try {
+      console.log("[index.tsx] Attempting to call initializeRagApi..."); // New log
+      await initializeRagApi();
+      console.log("[index.tsx] initializeRagApi call completed (or threw error handled below)."); // New log
+      router.push('/chat-and-graph');
+    } catch (error) {
+      console.error("[index.tsx] Error in handleOpenChatAndGraph after initializeRagApi call:", error); // Modified log
+      Alert.alert('Initialization Failed', 'Could not initialize the Research Assistant. Please try again.');
+    } finally {
+      console.log("[index.tsx] handleOpenChatAndGraph finally block."); // New log
+      setIsInitializing(false); // Hide loading screen
+    }
+  };
 
   // Upload a PDF to Supabase storage and show its public URL
   const uploadPdf = async (paper: Paper) => {
@@ -93,6 +115,18 @@ export default function HomeScreen({ navigation }: any) {
 
   return (
     <SafeAreaView style={styles.container}>
+      <Modal
+        transparent={true}
+        animationType="none"
+        visible={isInitializing}
+        onRequestClose={() => {}} // Required for Android
+      >
+        <View style={styles.loadingOverlay}>
+          <ActivityIndicator size="large" color="#1a535c" />
+          <RNText style={styles.loadingText}>Initializing Research Assistant...</RNText>
+        </View>
+      </Modal>
+
       <RNText style={styles.h1}>My Papers</RNText>
 
       <Pressable style={styles.dropzone} onPress={pickPdf}>
@@ -116,6 +150,13 @@ export default function HomeScreen({ navigation }: any) {
       >
         <RNText style={styles.graphBtnText}>Open Inciteful Graph</RNText>
       </Pressable>
+      
+      <Pressable
+        style={[styles.graphBtn, { bottom: insets.bottom + 84 }]}
+        onPress={handleOpenChatAndGraph} // Updated onPress handler
+      >
+        <RNText style={styles.graphBtnText}>Open Graph with Research Assistant</RNText>
+      </Pressable>
     </SafeAreaView>
   );
 }
@@ -130,4 +171,21 @@ const styles = StyleSheet.create({
   empty:{textAlign:'center',color:'#666',marginTop:24},
   graphBtn:{position:'absolute',left:24,right:24,backgroundColor:'#1a535c',borderRadius:16,alignItems:'center',justifyContent:'center',paddingVertical:14},
   graphBtnText:{color:'#fff',fontSize:16,fontWeight:'600'},
+  loadingOverlay: { // Added style for loading overlay
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.8)', // Semi-transparent white background
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 10, // Ensure it's on top
+  },
+  loadingText: { // Added style for loading text
+    marginTop: 10,
+    fontSize: 16,
+    color: '#1a535c',
+  },
 });

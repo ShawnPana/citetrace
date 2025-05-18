@@ -1,17 +1,19 @@
 from flask import Flask, jsonify, request, Response, stream_with_context
+from flask_cors import CORS
 from dotenv import load_dotenv
 import google.generativeai as genai
 import os
 import json
 from utils import RAGPipeline
 
-load_dotenv()
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 from utils import generate_similarity_paragraph_stream
 
 app = Flask(__name__)
+CORS(app)
 
 @app.route('/')
 def home():

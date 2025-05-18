@@ -12,7 +12,7 @@ from langchain_community.vectorstores import Chroma
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 from langchain.schema import Document
 
-load_dotenv()
+load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
