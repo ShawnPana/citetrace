@@ -3,12 +3,12 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 import os
 import json
+from utils import RAGPipeline
 
 load_dotenv()
 
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
-# for similarity paragraph generation
 from utils import generate_similarity_paragraph_stream
 
 app = Flask(__name__)
@@ -85,13 +85,9 @@ def compare_papers():
             "message": str(e)
         }), 500
 
-# Add these imports at the top with your other imports
-from utils import RAGPipeline
 
-# Initialize the RAG pipeline after creating your Flask app
 rag = RAGPipeline()
 
-# Add these new API endpoints to your app
 @app.route('/api/initialize-rag', methods=['POST'])
 def initialize_rag():
     try:
@@ -141,10 +137,8 @@ def query_rag():
         question = data['question']
         top_k = data.get('top_k', 5)
         
-        # Get relevant documents
         relevant_docs = rag.query(question, top_k=top_k)
         
-        # Format the sources for later use
         sources = []
         for doc in relevant_docs:
             sources.append({
@@ -153,20 +147,17 @@ def query_rag():
             })
         
         def generate():
-            # Send initial processing message
             yield json.dumps({
                 "status": "processing",
                 "message": "Retrieving relevant information..."
             }) + '\n'
             
-            # Stream the answer generation
             for chunk in rag.generate_answer_stream(question, relevant_docs):
                 yield json.dumps({
                     "status": "generating",
                     "chunk": chunk
                 }) + '\n'
             
-            # Send the sources at the end
             yield json.dumps({
                 "status": "complete",
                 "sources": sources
