@@ -47,3 +47,4 @@ ehthumbs.db
 Thumbs.db
 
 test.py
+supabase_client.py

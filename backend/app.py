@@ -85,5 +85,101 @@ def compare_papers():
             "message": str(e)
         }), 500
 
+# Add these imports at the top with your other imports
+from utils import RAGPipeline
+
+# Initialize the RAG pipeline after creating your Flask app
+rag = RAGPipeline()
+
+# Add these new API endpoints to your app
+@app.route('/api/initialize-rag', methods=['POST'])
+def initialize_rag():
+    try:
+        num_chunks = rag.process_all_pdfs()
+        return jsonify({
+            "status": "success",
+            "message": f"RAG pipeline initialized with {num_chunks} chunks"
+        })
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+@app.route('/api/process-pdf', methods=['POST'])
+def process_pdf():
+    data = request.json
+    if not data or 'pdf_name' not in data:
+        return jsonify({
+            "status": "error",
+            "message": "PDF name is required"
+        }), 400
+        
+    try:
+        pdf_name = data['pdf_name']
+        num_chunks = rag.process_single_pdf(pdf_name)
+        return jsonify({
+            "status": "success",
+            "message": f"Processed {pdf_name} into {num_chunks} chunks"
+        })
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
+
+@app.route('/api/query-rag', methods=['POST'])
+def query_rag():
+    data = request.json
+    if not data or 'question' not in data:
+        return jsonify({
+            "status": "error",
+            "message": "Question is required"
+        }), 400
+        
+    try:
+        question = data['question']
+        top_k = data.get('top_k', 5)
+        
+        # Get relevant documents
+        relevant_docs = rag.query(question, top_k=top_k)
+        
+        # Format the sources for later use
+        sources = []
+        for doc in relevant_docs:
+            sources.append({
+                "content": doc.page_content,
+                "source": doc.metadata.get("source", "Unknown")
+            })
+        
+        def generate():
+            # Send initial processing message
+            yield json.dumps({
+                "status": "processing",
+                "message": "Retrieving relevant information..."
+            }) + '\n'
+            
+            # Stream the answer generation
+            for chunk in rag.generate_answer_stream(question, relevant_docs):
+                yield json.dumps({
+                    "status": "generating",
+                    "chunk": chunk
+                }) + '\n'
+            
+            # Send the sources at the end
+            yield json.dumps({
+                "status": "complete",
+                "sources": sources
+            }) + '\n'
+        
+        return Response(stream_with_context(generate()), 
+                        mimetype='text/event-stream')
+                        
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500    
+
 if __name__ == '__main__':
     app.run(debug=True)
