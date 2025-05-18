@@ -25,6 +25,8 @@ const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY || '';
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 interface Paper { id: string; name: string; uri: string }
+// Define the backend URL
+const BACKEND_API_URL = process.env.EXPO_PUBLIC_BACKEND_API_URL || 'http://localhost:5000'; // Default to localhost for dev
 
 export default function HomeScreen({ navigation }: any) {
   const insets = useSafeAreaInsets();
@@ -49,9 +51,10 @@ export default function HomeScreen({ navigation }: any) {
     }
   };
 
-  // Upload a PDF to Supabase storage and show its public URL
-  const uploadPdf = async (paper: Paper) => {
+  // Upload a PDF to Supabase storage, call the backend for similarity, and update Supabase DB
+  const uploadPdfAndProcess = async (paper: Paper) => {
     try {
+      // 1. Upload PDF to Supabase Storage (as before)
       const response = await fetch(paper.uri);
       const fileBlob = await response.blob();
 
@@ -60,25 +63,106 @@ export default function HomeScreen({ navigation }: any) {
         .from('pdfs')
         .upload(paper.name, fileBlob, {
           cacheControl: '3600',
-          upsert: false,
+          upsert: false, // Consider setting to true if you want to overwrite, or handle conflicts
           contentType: 'application/pdf',
         });
-      if (uploadError) throw uploadError;
+      if (uploadError) throw new Error(`Supabase upload error: ${uploadError.message}`);
 
       const { data: urlData } = supabase
         .storage
         .from('pdfs')
         .getPublicUrl(paper.name);
 
+      if (!urlData || !urlData.publicUrl) {
+        throw new Error('Failed to get public URL from Supabase.');
+      }
+      console.log('File uploaded to Supabase:', urlData.publicUrl);
+
+      // 2. Call the new backend Flask endpoint
+      const formData = new FormData();
+      formData.append('file', {
+        uri: paper.uri,
+        name: paper.name,
+        type: 'application/pdf',
+      } as any);
+
+      console.log('Calling backend /api/colbert-similarity for:', paper.name);
+      const colbertResponse = await fetch(`${BACKEND_API_URL}/api/colbert-similarity`, {
+        method: 'POST',
+        body: formData,
+        // Headers are not strictly needed here if the backend doesn't require X-API-Key for this specific endpoint
+        // and Content-Type will be set automatically by FormData
+      });
+
+      if (!colbertResponse.ok) {
+        const errorText = await colbertResponse.text();
+        throw new Error(`Backend API error: ${colbertResponse.status} ${errorText}`);
+      }
+
+      const colbertResult = await colbertResponse.json();
+      console.log('Backend /api/colbert-similarity response:', colbertResult);
+
+      // 3. Add the new paper and its similarity scores to the 'similarity_scores' table in Supabase
+      //    We'll create a default similarity of 0.5 to all existing papers.
+      //    And the new paper will have a similarity of 0.5 to itself (or 1.0, depending on preference)
+
+      // First, get all existing papers from the 'papers' table (or wherever you store them)
+      // For this example, let's assume you have a 'papers' table with a 'name' column.
+      // If not, you might need to adjust this logic or fetch from your similarity_scores.json structure.
+
+      // For simplicity, we'll update the similarity_scores.json logic here.
+      // In a real app, you'd likely have a Supabase table for papers and another for scores.
+
+      // Fetch existing scores (or initialize if it's the first paper)
+      let { data: existingScoresData, error: fetchError } = await supabase
+        .from('similarity_scores_json') // Assuming you store the whole JSON in one row, one column
+        .select('scores_json')
+        .limit(1)
+        .single();
+
+      let scores: any = {};
+      if (fetchError && fetchError.code !== 'PGRST116') { // PGRST116: "Query returned no rows"
+        throw new Error(`Error fetching existing scores: ${fetchError.message}`);
+      }
+      if (existingScoresData) {
+        scores = existingScoresData.scores_json || {};
+      }
+
+
+      // Add new paper with default similarity to existing ones
+      const newPaperName = paper.name;
+      scores[newPaperName] = {}; // Initialize scores for the new paper
+
+      for (const existingPaperName in scores) {
+        if (existingPaperName !== newPaperName) {
+          scores[existingPaperName][newPaperName] = 0.5; // New paper's score against existing
+          scores[newPaperName][existingPaperName] = 0.5; // Existing paper's score against new
+        }
+      }
+      // Optionally, set self-similarity if needed, e.g., scores[newPaperName][newPaperName] = 1.0;
+
+
+      // Upsert the updated scores back to Supabase
+      const { error: upsertError } = await supabase
+        .from('similarity_scores_json')
+        .upsert({ id: 1, scores_json: scores }, { onConflict: 'id' }); // Assuming 'id' is the primary key
+
+      if (upsertError) {
+        throw new Error(`Error upserting scores to Supabase: ${upsertError.message}`);
+      }
+
+      console.log('Successfully uploaded PDF, called backend, and updated similarity scores in Supabase.');
       Alert.alert(
-        'Upload successful',
-        `Public URL:\n${urlData.publicUrl}`
+        'Processing Complete',
+        `PDF "${paper.name}" uploaded and processed. Similarity scores updated.`
       );
+
     } catch (err: any) {
-      console.error(err);
-      Alert.alert('Upload or URL generation failed', err.message);
+      console.error('Error in uploadPdfAndProcess:', err);
+      Alert.alert('Processing failed', err.message || 'An unexpected error occurred.');
     }
   };
+
 
   const pickPdf = async () => {
     try {
@@ -89,14 +173,15 @@ export default function HomeScreen({ navigation }: any) {
       if (!asset) return;
       
       const newPaper = {
-        id: Date.now().toString(),
+        id: Date.now().toString(), // This ID is for local state, Supabase might use its own
         name: asset.name ?? 'Untitled.pdf',
         uri: asset.uri,
       };
       setPapers((prev) => [...prev, newPaper]);
-      await uploadPdf(newPaper);
+      await uploadPdfAndProcess(newPaper); // Changed to call the new comprehensive function
     } catch (err) {
       Alert.alert('Error', 'Failed to pick or upload PDF');
+      console.error(err);
     }
   };
 
