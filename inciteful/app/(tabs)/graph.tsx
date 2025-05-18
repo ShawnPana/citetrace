@@ -1,4 +1,6 @@
-import React, { useEffect, useRef, useState } from "react";
+import rawSimData from "../../assets/similarity_scores.json";
+const simData: Record<string, Record<string, number>> = rawSimData;
+import React, { useEffect, useState } from "react";
 import {
   View,
   Dimensions,
@@ -7,90 +9,268 @@ import {
   Pressable,
   StyleSheet,
   ScrollView,
-  LayoutChangeEvent,
 } from "react-native";
-import Svg, { Circle, Line, G, Text as SvgText } from "react-native-svg";
-import * as d3 from "d3-force";
+import Svg, { Circle, Line, G, Path, Text as SvgText } from "react-native-svg";
+import { createClient } from "@supabase/supabase-js";
+import { polygonHull } from "d3-polygon";
 
-// constants
+// Supabase client
+const SUPABASE_URL = process.env.EXPO_PUBLIC_SUPABASE_URL!;
+const SUPABASE_ANON_KEY = process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY!;
+const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
 const SIDEBAR_WIDTH = 300;
+const BASE_RADIUS = 26;
 
-// types
-interface Node { id: string; label: string; subject: string; color: string; x?: number; y?: number; vx?: number; vy?: number; fx?: number | null; fy?: number | null; }
-interface Link { source: string | Node; target: string | Node; similarity: number; }
-
-// sample data
-const demoNodes: Node[] = [
-  { id: "1", label: "HAha", subject: "CV", color: "#ff6b6b" },
-  { id: "2", label: "HEHFAHF", subject: "ML", color: "#4ecdc4" },
-  { id: "3", label: "HUHH", subject: "AI", color: "#ffe66d" },
-  { id: "4", label: "Wack", subject: "ML", color: "#1a535c" },
-];
-const demoLinks: Link[] = [
-  { source: "1", target: "2", similarity: 0.3 },
-  { source: "2", target: "4", similarity: 0.7 },
-  { source: "1", target: "4", similarity: 0.5 },
-  { source: "3", target: "1", similarity: 0.2 },
-  { source: "3", target: "4", similarity: 0.4 },
-];
-const professorsByNode: Record<string, string[]> = { "1":["Fei‑Fei Li","Jitendra Malik"],"2":["Petar Veličković","Yoshua Bengio"],"3":["Richard Sutton","David Silver"],"4":["Ting Chen","Kaiming He"] };
-const arxivByNode: Record<string, {title:string;id:string}[]> = { "1":[{title:"Segment Anything",id:"2304.02643"},{title:"Vision Transformers",id:"2010.11929"}],"2":[{title:"Graph Isomorphism Networks",id:"1810.00826"},{title:"GNN Survey",id:"1812.08434"}],"3":[{title:"AlphaGo",id:"1603.03848"},{title:"Deep RL Survey",id:"1810.06339"}],"4":[{title:"SimCLR",id:"2002.05709"},{title:"MoCo",id:"1911.05722"}] };
+interface Node {
+  id: string;
+  label: string;
+  angle: number;
+  radius: number;
+  color: string;
+  cluster: number;
+}
+interface Link {
+  source: string;
+  target: string;
+  similarity: number;
+}
 
 export default function KnowledgeGraphScreen() {
-  const window = Dimensions.get("window");
-  const [nodes, setNodes] = useState<Node[]>([...demoNodes]);
-  const [links] = useState<Link[]>([...demoLinks]);
+  const [nodes, setNodes] = useState<Node[]>([]);
+  const [links, setLinks] = useState<Link[]>([]);
   const [selected, setSelected] = useState<Node | null>(null);
+  const [hovered, setHovered] = useState<string | null>(null);
   const [notes, setNotes] = useState<Record<string, string>>({});
-  const [graphLeft, setGraphLeft] = useState(0);
-  const simRef = useRef<d3.Simulation<Node, undefined> | null>(null);
+  const [theta, setTheta] = useState(0);
 
+  // animate rotation slower
   useEffect(() => {
-    simRef.current = d3
-      .forceSimulation(nodes)
-      .force("link", d3.forceLink<Node, Link>(links as any).id((d: any) => d.id).distance(100))
-      .force("charge", d3.forceManyBody().strength(-350))
-      .force("center", d3.forceCenter(window.width / 2, window.height / 2))
-      .on("tick", () => setNodes([...simRef.current!.nodes()]));
-    return () => {
-      simRef.current?.stop();
+    let raf: number;
+    const loop = () => {
+      setTheta((t) => t + 0.0005);
+      raf = requestAnimationFrame(loop);
     };
+    raf = requestAnimationFrame(loop);
+    return () => cancelAnimationFrame(raf);
   }, []);
 
-  // helper functions for moving nodes and stuff
-  const resolveNode = (n: string | Node): Node => (typeof n === "string" ? (nodes.find(nn => nn.id===n) as Node) : (n as Node));
-  const fixNode = (node: Node, pageX: number, pageY: number) => {
-    node.fx = pageX - graphLeft; 
-    node.fy = pageY; 
-  };
+  // fetch nodes and build links
+  useEffect(() => {
+    async function fetchPapers() {
+      const { data: files, error } = await supabase.storage.from("pdfs").list("", { limit: 100 });
+      if (error) return console.error(error.message);
 
-  const graphWidth = selected ? window.width - SIDEBAR_WIDTH : window.width;
+      const paperNodes: Node[] = files.map((f) => ({
+        id: f.name,
+        label: f.name.replace(/\.pdf$/, ""),
+        angle: 0,
+        radius: 0,
+        color: "#888",
+        cluster: 0,
+      }));
 
-  const onGraphLayout = (e: LayoutChangeEvent) => {
-    setGraphLeft(e.nativeEvent.layout.x);
-  };
+      // build links from similarity data
+      const paperLinks: Link[] = [];
+      paperNodes.forEach((a) => {
+        paperNodes.forEach((b) => {
+          if (a.id < b.id) {
+            const fwd = simData[a.id]?.[b.id];
+            const rev = simData[b.id]?.[a.id];
+            const s = fwd !== undefined ? fwd : rev;
+            if (s !== undefined) paperLinks.push({ source: a.id, target: b.id, similarity: s });
+          }
+        });
+      });
+
+      // similarity range for coloring
+      const sims = paperLinks.map((l) => l.similarity);
+      const minSim = Math.min(...sims);
+      const maxSim = Math.max(...sims);
+
+      // clustering for hulls only
+      const threshold = 0.4;
+      const parent = new Map<string, string>();
+      paperNodes.forEach((n) => parent.set(n.id, n.id));
+      function find(u: string): string {
+        const p = parent.get(u)!;
+        if (p !== u) {
+          const r = find(p);
+          parent.set(u, r);
+          return r;
+        }
+        return u;
+      }
+      function union(u: string, v: string) {
+        const pu = find(u), pv = find(v);
+        if (pu !== pv) parent.set(pu, pv);
+      }
+      paperLinks.forEach((l) => { if (l.similarity >= threshold) union(l.source, l.target); });
+      const clusters = new Map<string, Node[]>();
+      paperNodes.forEach((n) => {
+        const root = find(n.id);
+        if (!clusters.has(root)) clusters.set(root, []);
+        clusters.get(root)!.push(n);
+        n.cluster = Array.from(clusters.keys()).indexOf(root);
+      });
+
+      // distribute nodes in full circle with adjusted radius
+      const windowDims = Dimensions.get("window");
+      const baseR = Math.min(windowDims.width, windowDims.height) / 2 - BASE_RADIUS * 2;
+      const R = baseR * 0.7;
+      paperNodes.forEach((node) => {
+        node.angle = Math.random() * 2 * Math.PI;
+        node.radius = R + (Math.random() - 0.5) * baseR * 0.4;
+        const related = paperLinks.filter((l) => l.source === node.id || l.target === node.id);
+        const avg = related.reduce((sum, l) => sum + l.similarity, 0) / related.length;
+        const t = (avg - minSim) / (maxSim - minSim);
+        const hue = t * 360; // full spectrum
+        node.color = `hsl(${hue},80%,60%)`;
+      });
+
+      setNodes(paperNodes);
+      setLinks(paperLinks);
+    }
+    fetchPapers();
+  }, []);
+
+  const windowDims = Dimensions.get("window");
+  const W = windowDims.width;
+  const H = windowDims.height;
+  const cx = W / 2;
+  const cy = H / 2;
+
+  const positioned = nodes.map((n) => {
+    const rawX = cx + n.radius * Math.cos(n.angle + theta);
+    const rawY = cy + n.radius * Math.sin(n.angle + theta);
+    const maxW = W - SIDEBAR_WIDTH;
+    const maxH = H - 100;
+    const x = Math.min(Math.max(rawX, BASE_RADIUS), maxW - BASE_RADIUS);
+    const y = Math.min(Math.max(rawY, BASE_RADIUS), maxH - BASE_RADIUS);
+    return { ...n, x, y };
+  });
+
+  const hulls = Array.from(
+    positioned.reduce((m, n) => {
+      if (!m.has(n.cluster)) m.set(n.cluster, []);
+      m.get(n.cluster)!.push([n.x, n.y]);
+      return m;
+    }, new Map<number, [number, number][]>())
+  ).map(([, pts]) => polygonHull(pts));
 
   return (
-    <View style={styles.rowRoot}>
-      <View onLayout={onGraphLayout} style={[styles.graphWrapper,{width:graphWidth}]}>        
-        <Svg width={graphWidth} height={window.height}>
-          {links.map((l,idx)=>{const s=resolveNode(l.source);const t=resolveNode(l.target);if(!s||!t||s.x==null||t.x==null)return null;return <Line key={idx} x1={s.x} y1={s.y} x2={t.x} y2={t.y} stroke="#999" strokeOpacity={l.similarity} strokeWidth={2}/>;})}
-          {nodes.map(n=>{if(n.x==null||n.y==null)return null;return(<G key={n.id}
-                onStartShouldSetResponder={()=>true}
-                onMoveShouldSetResponder={()=>true}
-                onResponderGrant={e=>{fixNode(n,e.nativeEvent.pageX,e.nativeEvent.pageY);simRef.current?.alpha(0.5).restart();}}
-                onResponderMove={e=>{fixNode(n,e.nativeEvent.pageX,e.nativeEvent.pageY);simRef.current?.alpha(0.5).restart();}}
-                onResponderRelease={()=>{n.fx=n.fy=null;simRef.current?.alphaTarget(0);}}
-                onPress={()=>setSelected(n)}>
-              <Circle cx={n.x} cy={n.y} r={26} fill={n.color}/>
-              <SvgText x={n.x} y={n.y+38} fontSize={11} fill="#000" textAnchor="middle">{n.label}</SvgText>
-            </G>);})}
-        </Svg>
+    <View style={styles.container}>
+      <View style={styles.header}>
+        <RNText style={styles.headerTitle}>Knowledge Graph Explorer</RNText>
       </View>
-      {selected&&(<View style={styles.sidebar}><ScrollView contentContainerStyle={styles.sidebarContent}><RNText style={styles.title}>{selected.label}</RNText><RNText style={styles.section}>Your Notes</RNText><TextInput multiline placeholder="Your notes here!" style={styles.textArea} value={notes[selected.id]||""} onChangeText={t=>setNotes(p=>({...p,[selected.id]:t}))}/><RNText style={styles.section}>Prominent Professors</RNText>{professorsByNode[selected.id].map(prof=>(<RNText key={prof} style={styles.list}>• {prof}</RNText>))}<RNText style={styles.section}>Related arXiv Papers</RNText>{arxivByNode[selected.id].map(({title,id})=>(<RNText key={id} style={styles.list}>• {title} ({id})</RNText>))}<Pressable style={styles.close} onPress={()=>setSelected(null)}><RNText style={styles.closeText}>Close</RNText></Pressable></ScrollView></View>)}
+      <View style={styles.body}>
+        <View style={styles.graphWrapper}>
+          <Svg width={W - SIDEBAR_WIDTH} height={H - 100}>
+            {hulls.map((hull, idx) => hull && (
+              <Path
+                key={idx}
+                d={hull.map((pt, i) => `${i === 0 ? 'M' : 'L'}${pt[0]},${pt[1]}`).join(' ') + ' Z'}
+                fill={positioned.find((n) => n.cluster === idx)?.color}
+                opacity={0.15}
+                stroke={positioned.find((n) => n.cluster === idx)?.color}
+                strokeWidth={2}
+              />
+            ))}
+            {links.map((l, idx) => {
+              const s = positioned.find((n) => n.id === l.source);
+              const t = positioned.find((n) => n.id === l.target);
+              if (!s || !t) return null;
+              return (
+                <Line
+                  key={idx}
+                  x1={s.x}
+                  y1={s.y}
+                  x2={t.x}
+                  y2={t.y}
+                  stroke="#ccc"
+                  strokeOpacity={0.1 + l.similarity * 0.9}
+                  strokeWidth={1.5}
+                />
+              );
+            })}
+            {positioned.map((n) => {
+              const isSel = selected?.id === n.id;
+              const isHov = hovered === n.id;
+              return (
+                <G
+                  key={n.id}
+                  onPress={() => setSelected(n)}
+                  onPressIn={() => setHovered(n.id)}
+                  onPressOut={() => setHovered(null)}
+                >
+                  <Circle
+                    cx={n.x}
+                    cy={n.y}
+                    r={isHov ? BASE_RADIUS * 1.2 : BASE_RADIUS}
+                    fill={n.color}
+                    stroke="#333"
+                    strokeWidth={isSel ? 4 : isHov ? 3 : 2}
+                    opacity={0.8}
+                  />
+                  <SvgText
+                    x={n.x}
+                    y={n.y + BASE_RADIUS + 10}
+                    fontSize={12}
+                    fill="#333"
+                    textAnchor="middle"
+                  >
+                    {n.label.length > 15 ? n.label.slice(0, 15) + '...' : n.label}
+                  </SvgText>
+                </G>
+              );
+            })}
+          </Svg>
+        </View>
+        <View style={styles.sidebar}>
+          <ScrollView contentContainerStyle={styles.sidebarContent}>
+            {selected ? (
+              <>
+                <RNText style={styles.title}>{selected.label}</RNText>
+                <View style={styles.notesContainer}>
+                  <RNText style={styles.section}>Your Notes</RNText>
+                  <TextInput
+                    multiline
+                    placeholder="Your notes here!"
+                    style={styles.textArea}
+                    value={notes[selected.id] || ""}
+                    onChangeText={(t) => setNotes((p) => ({ ...p, [selected.id]: t }))}
+                  />
+                </View>
+                <Pressable style={styles.close} onPress={() => setSelected(null)}>
+                  <RNText style={styles.closeText}>Close</RNText>
+                </Pressable>
+              </>
+            ) : (
+              <View style={styles.placeholderContainer}>
+                <RNText style={styles.placeholderText}>Click on a node to add notes!</RNText>
+              </View>
+            )}
+          </ScrollView>
+        </View>
+      </View>
     </View>
   );
 }
 
-// styles
-const styles=StyleSheet.create({rowRoot:{flex:1,flexDirection:"row",backgroundColor:"#fff"},graphWrapper:{height:"100%"},sidebar:{width:SIDEBAR_WIDTH,backgroundColor:"#fff",paddingTop:24,paddingHorizontal:16},sidebarContent:{paddingBottom:40},title:{fontSize:20,fontWeight:"700",marginBottom:12},section:{fontSize:15,fontWeight:"600",marginTop:18,marginBottom:6},textArea:{borderWidth:1,borderColor:"#ccc",borderRadius:12,padding:8,minHeight:80,textAlignVertical:"top"},list:{marginLeft:10,marginVertical:2},close:{alignSelf:"center",backgroundColor:"#1a535c",borderRadius:16,paddingHorizontal:26,paddingVertical:10,marginTop:28},closeText:{color:"#fff",fontWeight:"600"}});
+const styles = StyleSheet.create({
+  container: { flex: 1, backgroundColor: '#f5f7fa' },
+  header: { height: 60, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff', borderBottomWidth: 1, borderBottomColor: '#e0e0e0' },
+  headerTitle: { fontSize: 20, fontWeight: '700', color: '#333' },
+  body: { flex: 1, flexDirection: 'row' },
+  graphWrapper: { width: Dimensions.get('window').width - SIDEBAR_WIDTH, backgroundColor: '#f5f7fa', height: '100%' },
+  sidebar: { width: SIDEBAR_WIDTH, backgroundColor: '#fff', borderLeftWidth: 1, borderLeftColor: '#e0e0e0', padding: 20, shadowColor: '#000', shadowOffset: { width: 0, height: 2 }, shadowOpacity: 0.05, shadowRadius: 4, elevation: 2 },
+  sidebarContent: { paddingBottom: 40, flexGrow: 1, justifyContent: 'center' },
+  title: { fontSize: 22, fontWeight: '800', marginBottom: 16, color: '#4a4a4a' },
+  notesContainer: { backgroundColor: '#f9f9f9', borderRadius: 8, padding: 12, shadowColor: '#000', shadowOffset: { width: 0, height: 1 }, shadowOpacity: 0.05, shadowRadius: 2, elevation: 1, marginBottom: 20 },
+  section: { fontSize: 14, fontWeight: '600', marginBottom: 8, color: '#555' },
+  textArea: { borderWidth: 1, borderColor: '#ddd', borderRadius: 6, padding: 10, minHeight: 100, textAlignVertical: 'top', backgroundColor: '#fff' },
+  close: { alignSelf: 'center', backgroundColor: '#4a90e2', borderRadius: 20, paddingHorizontal: 30, paddingVertical: 12, marginTop: 10 },
+  closeText: { color: '#fff', fontWeight: '600', fontSize: 16 },
+  placeholderContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
+  placeholderText: { fontSize: 16, color: '#888', fontStyle: 'italic' },
+});
