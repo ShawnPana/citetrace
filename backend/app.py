@@ -4,7 +4,8 @@ from dotenv import load_dotenv
 import google.generativeai as genai
 import os
 import json
-from utils import RAGPipeline
+import requests
+from utils import RAGPipeline, extract_text_from_pdf
 
 load_dotenv(dotenv_path=os.path.join(os.path.dirname(__file__), '..', '.env'))
 
@@ -14,6 +15,10 @@ from utils import generate_similarity_paragraph_stream
 
 app = Flask(__name__)
 CORS(app)
+
+# Placeholder for your external API URL - replace with your actual URL
+EXTERNAL_API_URL = "YOUR_API_URL/colbert-similarity" 
+COLBERT_API_KEY = "key1"
 
 @app.route('/')
 def home():
@@ -86,6 +91,7 @@ def compare_papers():
             "status": "error",
             "message": str(e)
         }), 500
+
 
 
 rag = RAGPipeline()
@@ -173,6 +179,58 @@ def query_rag():
             "status": "error",
             "message": str(e)
         }), 500    
+
+@app.route('/api/colbert-similarity', methods=['POST'])
+def colbert_similarity():
+    """API endpoint to process a PDF and query the Colbert API."""
+    if 'file' not in request.files:
+        return jsonify({
+            "status": "error",
+            "message": "PDF file is required"
+        }), 400
+        
+    file = request.files['file']
+    
+    if file.filename == '':
+        return jsonify({
+            "status": "error", 
+            "message": "No file selected"
+        }), 400
+        
+    if not file.filename.endswith('.pdf'):
+        return jsonify({
+            "status": "error", 
+            "message": "File must be a PDF"
+        }), 400
+
+    try:
+        pdf_bytes = file.read()
+        extracted_text = extract_text_from_pdf(pdf_bytes) # Assuming this function exists in utils.py
+        
+        headers = {
+            "Content-Type": "application/json",
+            "X-API-Key": COLBERT_API_KEY
+        }
+        payload = {
+            "query_text": extracted_text,
+            "candidate_texts": [extracted_text] # Assuming candidate_texts is a list with the extracted text
+        }
+        
+        response = requests.post(EXTERNAL_API_URL, headers=headers, json=payload)
+        response.raise_for_status()  # Raise an exception for HTTP errors (4xx or 5xx)
+        
+        return jsonify(response.json())
+        
+    except requests.exceptions.RequestException as e:
+        return jsonify({
+            "status": "error",
+            "message": f"External API request failed: {str(e)}"
+        }), 502 # Bad Gateway
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": str(e)
+        }), 500
 
 if __name__ == '__main__':
     app.run(debug=True)
